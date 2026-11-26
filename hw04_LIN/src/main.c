@@ -5,14 +5,21 @@
 #include "Siul2_Port_Ip_Cfg.h"
 #include "S32K312_LPUART.h"
 #include <stdio.h>
+#include "GPIO.h"
+#include "PIT_TIMER.h"
+#include "GPIO.h"
+#include <string.h>
 
 volatile int exit_code = 0;
-#define MASTER_TO_SLAVE_ID 0x01U
-#define SLAVE_ID 0x01U
+#define SLAVE_ID_1 0x01U
+#define SLAVE_ID_2 0x02U
+#define SLAVE_ID_3 0x03U
+#define ACTIVE_SLAVE_ID SLAVE_ID_1
 #define SLAVE_RESPONSE_LENGTH 8U
 #define LIN_NODE_MASTER 0U
 #define LIN_NODE_SLAVE 1U
-#define LIN_NODE_ROLE LIN_NODE_MASTER
+#define LIN_NODE_BOTH 2U
+#define LIN_NODE_ROLE LIN_NODE_BOTH
 
 static volatile Lin_StatusType slaveTransactionStatus;
 static volatile uint8 slaveResponseData[SLAVE_RESPONSE_LENGTH];
@@ -27,6 +34,15 @@ static volatile uint32 fxioShifterError;
 static volatile uint32 fxioRxPinState;
 static volatile uint32 fxioLastEvent;
 static volatile uint32 fxioLastPid;
+static volatile uint32 masterToSlaveIdCounter = 0U;
+
+static const uint8_t slave_ids[] = {
+    SLAVE_ID_1,
+    SLAVE_ID_2,
+    SLAVE_ID_3
+};
+
+#define SLAVE_ID_COUNT (sizeof(slave_ids) / sizeof(slave_ids[0]))
 
 static void LinUart6Init(void)
 {
@@ -143,7 +159,7 @@ static void LinTransactionDone(Lin_StatusType status,
             slaveResponseData[i] = data[i];
         }
         slaveResponseReceived = 
-            ((status == LIN_STATUS_OK) && (id == MASTER_TO_SLAVE_ID));
+            ((status == LIN_STATUS_OK) && (id == slave_ids[masterToSlaveIdCounter]));
     }
 }
 
@@ -153,23 +169,48 @@ static void LinPrepareSlaveResponse(uint8 id,
                                     void *userData)
 {
     (void)userData;
-    if (id == SLAVE_ID) { // TODO: add support for multiple IDs if needed
-                            // make that each slave turn on a different LED
-    						// for certain amount of time
-                            // led color is the response to be send
-        
-            data[0] = 'b';
-            data[1] = 'l';
-            data[2] = 'u';
-            data[3] = 'e';
-            data[4] = 'e';
-            data[5] = 'e';
-            data[6] = 'e';
-            data[7] = 'e';
-        
+
+    if(id == ACTIVE_SLAVE_ID)
+    {
+#if ACTIVE_SLAVE_ID == SLAVE_ID_1
+    	turnOnRedLed();
+    	memcpy(data, "redddddd", 8);
+#elif ACTIVE_SLAVE_ID == SLAVE_ID_2
+    	turnOnGreenLed();
+    	memcpy(data, "greennnn", 8);
+#elif ACTIVE_SLAVE_ID == SLAVE_ID_3
+    	turnOnBlueLed();
+    	memcpy(data, "blueeeee", 8);
+#else
+#endif
     } else {
-        *length = 0U;
-    }
+    	*length = 0U;
+	}
+}
+
+void resetLed(void)
+{
+#if ACTIVE_SLAVE_ID == SLAVE_ID_1
+	turnOffRedLed();
+#elif ACTIVE_SLAVE_ID == SLAVE_ID_2
+	turnOffGreenLed();
+#elif ACTIVE_SLAVE_ID == SLAVE_ID_3
+	turnOffBlueLed();
+#else
+#endif
+}
+
+void initLed(void)
+{
+#if ACTIVE_SLAVE_ID == SLAVE_ID_1
+	initRedLed();
+#elif ACTIVE_SLAVE_ID == SLAVE_ID_2
+	initGreenLed();
+#elif ACTIVE_SLAVE_ID == SLAVE_ID_3
+	initBlueLed();
+#else
+#endif
+	resetLed();
 }
 
 int main(void)
@@ -186,18 +227,20 @@ int main(void)
         .userData = NULL_PTR
     };
 
-#if (LIN_NODE_ROLE == LIN_NODE_MASTER)
+#if (LIN_NODE_ROLE == LIN_NODE_MASTER || LIN_NODE_ROLE == LIN_NODE_BOTH)
     Lin_MasterInit(9600U, &masterCallbacks);
     Lin_MasterSw3Init();
     LinUart6Init();
-#elif (LIN_NODE_ROLE == LIN_NODE_SLAVE)
+#endif
+#if (LIN_NODE_ROLE == LIN_NODE_SLAVE || LIN_NODE_ROLE == LIN_NODE_BOTH)
     Lin_SlaveInit(&slaveCallbacks);
-#else
-#error "LIN_NODE_ROLE must be LIN_NODE_MASTER or LIN_NODE_SLAVE"
+    initLed();
+	initTimer();
+	setInterruptCallbackForTimer(1000, resetLed);
 #endif
 
     for (;;) {
-#if (LIN_NODE_ROLE == LIN_NODE_MASTER)
+#if (LIN_NODE_ROLE == LIN_NODE_MASTER || LIN_NODE_ROLE == LIN_NODE_BOTH)
         if (masterResponseLogPending == TRUE) {
             uint8 responseData[SLAVE_RESPONSE_LENGTH];
             uint8 responseLength = slaveResponseLength;
@@ -224,16 +267,21 @@ int main(void)
             // on each press, wrapping around to 0 when it reaches the number of slaves. 
             // Use this counter to determine the slave ID to send to.
             // MASTER_TO_SLAVE_ID is currently hardcoded to 0x01U, but it should be updated based on the counter.
-            Lin_StatusType sendStatus =
-                Lin_MasterSendFrame(MASTER_TO_SLAVE_ID, SLAVE_RESPONSE_LENGTH);
+        	Lin_StatusType sendStatus =
+                Lin_MasterSendFrame(slave_ids[masterToSlaveIdCounter], SLAVE_RESPONSE_LENGTH);
             char msg[64U];
 
             if (sendStatus == LIN_STATUS_OK) {
                 (void)snprintf(msg, sizeof(msg),
                                "[LIN TX] Solicitud enviada a slave ID=0x%02X len=8\r\n",
-                               (unsigned int)MASTER_TO_SLAVE_ID);
+                               (unsigned int)slave_ids[masterToSlaveIdCounter]);
             } 
             LinUart6Print(msg);
+
+            masterToSlaveIdCounter++;
+            if((masterToSlaveIdCounter) > SLAVE_ID_COUNT){
+            	masterToSlaveIdCounter = 0U;
+            }
         }
 #endif
 

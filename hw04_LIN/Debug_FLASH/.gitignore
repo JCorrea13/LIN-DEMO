@@ -1,0 +1,9 @@
+/src/
+/Project_Settings/
+/RTD/
+/board/
+/generate/
+/hw04_LIN.args
+/makefile
+/objects.mk
+/sources.mk
