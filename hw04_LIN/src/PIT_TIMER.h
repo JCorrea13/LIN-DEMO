@@ -26,4 +26,14 @@ void initTimer(void);
  */
 void setInterruptCallbackForTimer(uint32_t ms, TimerInterruptCallback callback);
 
+/**
+ * Start or replace the one-shot LIN transaction timeout on PIT channel 0.
+ */
+void startLinTransactionTimeout(uint32_t ms, TimerInterruptCallback callback);
+
+/**
+ * Stop the one-shot LIN transaction timeout on PIT channel 0.
+ */
+void stopLinTransactionTimeout(void);
+
 #endif

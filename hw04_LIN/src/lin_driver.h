@@ -4,6 +4,7 @@
 #include "Std_Types.h"
 
 #define LIN_MAX_DATA_BYTES 8U
+#define LIN_MASTER_TIMEOUT_MS 100U
 
 typedef enum
 {
@@ -12,7 +13,8 @@ typedef enum
     LIN_STATUS_BUSY,
     LIN_STATUS_UART_ERROR,
     LIN_STATUS_PARITY_ERROR,
-    LIN_STATUS_CHECKSUM_ERROR
+    LIN_STATUS_CHECKSUM_ERROR,
+    LIN_STATUS_TIMEOUT
 } Lin_StatusType;
 
 typedef void (*Lin_TransactionCallback)(Lin_StatusType status,

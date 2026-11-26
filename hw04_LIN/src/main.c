@@ -99,6 +99,9 @@ static void LinUart6PrintResponse(uint8 id,
         case LIN_STATUS_CHECKSUM_ERROR:
             statusText = "CHECKSUM_ERROR";
             break;
+        case LIN_STATUS_TIMEOUT:
+            statusText = "TIMEOUT";
+            break;
         case LIN_STATUS_UART_ERROR:
             statusText = "UART_ERROR";
             break;
@@ -150,7 +153,6 @@ static void LinTransactionDone(Lin_StatusType status,
     slaveResponseReceived = FALSE;
     masterResponseLogStatus = status;
     masterResponseLogId = id;
-    masterResponseLogPending = TRUE;
 
     if (((status == LIN_STATUS_OK) ||
          (status == LIN_STATUS_CHECKSUM_ERROR)) &&
@@ -161,6 +163,7 @@ static void LinTransactionDone(Lin_StatusType status,
         slaveResponseReceived = 
             ((status == LIN_STATUS_OK) && (id == slave_ids[masterToSlaveIdCounter]));
     }
+    masterResponseLogPending = TRUE;
 }
 
 static void LinPrepareSlaveResponse(uint8 id,
@@ -262,11 +265,6 @@ int main(void)
         }
 
         if (Lin_MasterSw3ConsumePress()) { // SW3 button pressed, send a LIN frame to the slave
-            // TODO: Add logic to send to different slave IDs 
-            // on each press. Create a counter based on the number of slaves and increment it
-            // on each press, wrapping around to 0 when it reaches the number of slaves. 
-            // Use this counter to determine the slave ID to send to.
-            // MASTER_TO_SLAVE_ID is currently hardcoded to 0x01U, but it should be updated based on the counter.
         	Lin_StatusType sendStatus =
                 Lin_MasterSendFrame(slave_ids[masterToSlaveIdCounter], SLAVE_RESPONSE_LENGTH);
             char msg[64U];
@@ -275,12 +273,15 @@ int main(void)
                 (void)snprintf(msg, sizeof(msg),
                                "[LIN TX] Solicitud enviada a slave ID=0x%02X len=8\r\n",
                                (unsigned int)slave_ids[masterToSlaveIdCounter]);
-            } 
-            LinUart6Print(msg);
-
-            masterToSlaveIdCounter++;
-            if((masterToSlaveIdCounter) > SLAVE_ID_COUNT){
-            	masterToSlaveIdCounter = 0U;
+                LinUart6Print(msg);
+                masterToSlaveIdCounter++;
+                if (masterToSlaveIdCounter >= SLAVE_ID_COUNT) {
+                    masterToSlaveIdCounter = 0U;
+                }
+            } else if (sendStatus == LIN_STATUS_BUSY) {
+                LinUart6Print("[LIN TX] Master busy; request ignored\r\n");
+            } else {
+                LinUart6Print("[LIN TX] Request failed\r\n");
             }
         }
 #endif

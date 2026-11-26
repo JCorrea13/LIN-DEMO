@@ -9,6 +9,7 @@
 #include "Siul2_Port_Ip_Cfg.h"
 #include "S32K312_LPUART.h"
 #include "S32K312_FLEXIO.h"
+#include "PIT_TIMER.h"
 #include "IntCtrl_Ip.h"
 #include "fxio_lin/Flexio_Mcl_Ip_HwAccess.h"
 
@@ -39,6 +40,7 @@ static uint8 linExpectedLength;
 static uint8 linCurrentId;
 static volatile uint8 linRxIndex;
 static volatile boolean linMasterReceiveActive;
+static volatile boolean linMasterTransactionActive;
 static uint8 linFxioResponse[LIN_MAX_DATA_BYTES + 1U];
 typedef enum
 {
@@ -269,6 +271,36 @@ static void Lin_HandleReceivedByte(uint8 rxByte)
 }
 
 static void Lin_MasterStopResponseReception(Lin_StatusType status);
+static void Lin_MasterTimeoutCallback(void);
+
+static void Lin_MasterCompleteTransaction(Lin_StatusType status)
+{
+    IntCtrl_Ip_DisableIrq(PIT0_IRQn);
+    if (linMasterTransactionActive != TRUE) {
+        IntCtrl_Ip_EnableIrq(PIT0_IRQn);
+        return;
+    }
+
+    linMasterTransactionActive = FALSE;
+    stopLinTransactionTimeout();
+    IP_FLEXIO->TIMIEN &= ~(1UL << 0U);
+    IP_FLEXIO->SHIFTSIEN &= ~(1UL << 1U);
+    IP_FLEXIO->SHIFTEIEN &= ~(1UL << 1U);
+    IP_FLEXIO->TIMCTL[0U] &= ~FLEXIO_TIMCTL_TIMOD_MASK;
+    IP_FLEXIO->TIMCTL[1U] &= ~FLEXIO_TIMCTL_TIMOD_MASK;
+    IP_FLEXIO->SHIFTSTAT = (1UL << 0U) | (1UL << 1U);
+    IP_FLEXIO->SHIFTERR = (1UL << 0U) | (1UL << 1U);
+    IP_FLEXIO->TIMSTAT = (1UL << 0U);
+    linMasterTxState = LIN_MASTER_TX_IDLE;
+    linMasterReceiveActive = FALSE;
+    IntCtrl_Ip_EnableIrq(PIT0_IRQn);
+    Lin_Notify(status);
+}
+
+static void Lin_MasterTimeoutCallback(void)
+{
+    Lin_MasterCompleteTransaction(LIN_STATUS_TIMEOUT);
+}
 
 static void Lin_MasterHandleReceivedByte(uint8 rxByte)
 {
@@ -285,14 +317,7 @@ static void Lin_MasterHandleReceivedByte(uint8 rxByte)
 
 static void Lin_MasterStopResponseReception(Lin_StatusType status)
 {
-    IP_FLEXIO->SHIFTSIEN &= ~(1UL << 1U);
-    IP_FLEXIO->SHIFTEIEN &= ~(1UL << 1U);
-    IP_FLEXIO->TIMCTL[1U] &= ~FLEXIO_TIMCTL_TIMOD_MASK;
-    IP_FLEXIO->SHIFTSTAT = (1UL << 1U);
-    IP_FLEXIO->SHIFTERR = (1UL << 1U);
-    linMasterReceiveActive = FALSE;
-    //IntCtrl_Ip_DisableIrq(FLEXIO_IRQn);
-    Lin_Notify(status);
+    Lin_MasterCompleteTransaction(status);
 }
 
 static void Lin_Lpuart5IrqHandler(void)
@@ -332,6 +357,7 @@ void Lin_MasterInit(uint32 baudrate,
 
     Lin_InitCommon();
     linMasterReceiveActive = FALSE;
+    linMasterTransactionActive = FALSE;
 
     Siul2_Port_Ip_SetInputBuffer(PORTB_L_HALF,
                                  9U,
@@ -449,6 +475,7 @@ Lin_StatusType Lin_MasterSendFrame(uint8 id,
     linCurrentId = id;
     linExpectedLength = responseLength;
     linMasterReceiveActive = FALSE;
+    linMasterTransactionActive = TRUE;
     linRxIndex = 0U;
     pid = Lin_AddLengthAndParityToHeader(id, responseLength);
     linFxioLastPid = pid;
@@ -468,6 +495,8 @@ Lin_StatusType Lin_MasterSendFrame(uint8 id,
 
     linMasterTxPid = pid;
     linMasterTxState = LIN_MASTER_TX_BREAK;
+    startLinTransactionTimeout(LIN_MASTER_TIMEOUT_MS,
+                               Lin_MasterTimeoutCallback);
     IP_FLEXIO->TIMCTL[0U] =
         (IP_FLEXIO->TIMCTL[0U] & ~(FLEXIO_TIMCTL_TIMOD_MASK)) |
         FLEXIO_TIMCTL_TIMOD(1U);
